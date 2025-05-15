@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>CREATE TABLE文ジェネレータ (SQL Server専用)</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .note { background: #f9f9f9; border-left: 4px solid #f39c12; padding: 10px; margin-bottom: 20px; }
+    input, select, textarea, button { margin: 5px; }
+    table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 5px; text-align: left; }
+    textarea { width: 100%; height: 150px; }
+    h1, h2, h3 { color: #34495e; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <h1>CREATE TABLE文ジェネレータ (SQL Server専用)</h1>
+
+  <div class="note">
+    <strong>注意：</strong><br>
+    ・本ツールは<strong>SQL Server専用</strong>の構文で生成いたします。<br>
+    ・生成されたSQLは必ずご自身でご確認のうえ、<strong>自己責任</strong>でご利用ください。
+  </div>
+
+  <h2>使い方</h2>
+  <ol>
+    <li>上部の「テーブル名」に任意の名前を入力します。</li>
+    <li>ExcelやCSVから列情報をコピーし、「ExcelやCSVから一括貼り付け」のテキストエリアに貼り付けます。</li>
+    <li>「貼り付け内容から列を追加」ボタンをクリックして列を追加します。</li>
+    <li>必要に応じて「列を追加」ボタンやチェックボックスで列定義を編集します。</li>
+    <li>「SQLを生成」ボタンをクリックすると、下部にCREATE TABLE文が表示されます。</li>
+    <li>表示されたSQLを確認のうえ、SQL Serverで実行してください。</li>
+  </ol>
+
+  <label>テーブル名: <input type="text" id="tableName" placeholder="例: Users"></label>
+
+  <h2>列の定義</h2>
+
+  <h3>ExcelやCSVから一括貼り付け</h3>
+  <p>形式: 列名[TAB]型[TAB]長さ（省略可）[TAB]NULL許可（true/false）</p>
+  <textarea id="bulkInput" placeholder="例：&#10;id	INT		false&#10;name	NVARCHAR	100	true&#10;price	DECIMAL	10,2	false"></textarea><br>
+  <button onclick="parseBulk()">貼り付け内容から列を追加</button>
+
+  <table id="columnsTable">
+    <thead>
+      <tr>
+        <th>列名</th>
+        <th>型</th>
+        <th>長さ</th>
+        <th>NULL許可</th>
+        <th>主キー</th>
+        <th>削除</th>
+      </tr>
+    </thead>
+    <tbody id="columnsBody">
+    </tbody>
+  </table>
+  <button onclick="addColumn()">列を追加</button>
+
+  <h2>生成されたSQL</h2>
+  <textarea id="output" readonly placeholder="ここに CREATE TABLE 文が表示されます"></textarea><br>
+  <button onclick="generateSQL()">SQLを生成</button>
+
+  <script>
+    const TYPE_OPTIONS = ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'BIT', 'DECIMAL', 'FLOAT', 'DATETIME', 'DATE', 'TIME', 'CHAR', 'NCHAR', 'VARCHAR', 'NVARCHAR', 'TEXT', 'NTEXT', 'UNIQUEIDENTIFIER'];
+
+    function addColumn(name = '', type = 'VARCHAR', length = '', nullable = true, isPK = false) {
+      const tbody = document.getElementById('columnsBody');
+      const row = document.createElement('tr');
+
+      const typeOptionsHtml = TYPE_OPTIONS.map(t =>
+        `<option value="${t}" ${type === t ? 'selected' : ''}>${t}</option>`
+      ).join('');
+
+      row.innerHTML = `
+        <td><input type="text" class="colName" value="${name}"></td>
+        <td><select class="colType">${typeOptionsHtml}</select></td>
+        <td><input type="text" class="colLength" value="${length}" placeholder="例: 50, 10,2"></td>
+        <td><input type="checkbox" class="colNullable" ${nullable ? 'checked' : ''}></td>
+        <td><input type="checkbox" class="colPrimaryKey" ${isPK ? 'checked' : ''}></td>
+        <td><button onclick="removeRow(this)">削除</button></td>
+      `;
+      tbody.appendChild(row);
+    }
+
+    function removeRow(btn) {
+      btn.closest('tr').remove();
+    }
+
+    function parseBulk() {
+      const text = document.getElementById('bulkInput').value.trim();
+      if (!text) return;
+
+      text.split('\n').forEach(line => {
+        const parts = line.split(/\t/);
+        if (parts.length < 2) return;
+
+        const name = parts[0].trim();
+        const type = parts[1].trim().toUpperCase();
+        const length = parts[2]?.trim() || '';
+        const nullable = (parts[3]?.trim().toLowerCase() === 'true');
+
+        addColumn(name, TYPE_OPTIONS.includes(type) ? type : 'VARCHAR', length, nullable);
+      });
+
+      document.getElementById('bulkInput').value = '';
+    }
+
+    function generateSQL() {
+      const tableName = document.getElementById('tableName').value.trim();
+      if (!tableName) { alert('テーブル名を入力してください。'); return; }
+
+      const rows = document.querySelectorAll('#columnsBody tr');
+      if (rows.length === 0) { alert('少なくとも1つの列を追加してください。'); return; }
+
+      const cols = [];
+      const pks = [];
+
+      rows.forEach(row => {
+        const name = row.querySelector('.colName').value.trim();
+        let type = row.querySelector('.colType').value;
+        const length = row.querySelector('.colLength').value.trim();
+        const nullable = row.querySelector('.colNullable').checked;
+        const isPK = row.querySelector('.colPrimaryKey').checked;
+        if (!name) return;
+
+        if (length && ['VARCHAR','NVARCHAR','CHAR','NCHAR','DECIMAL'].includes(type)) {
+          type += `(${length})`;
+        }
+        cols.push(`  [${name}] ${type} ${nullable ? '' : 'NOT NULL'}`);
+        if (isPK) pks.push(`[${name}]`);
+      });
+
+      let sql = `CREATE TABLE [${tableName}] (\n${cols.join(',\n')}`;
+      if (pks.length) sql += `,\n  PRIMARY KEY (${pks.join(', ')})`;
+      sql += `\n);`;
+
+      document.getElementById('output').value = sql;
+    }
+
+    window.onload = () => addColumn();
+  </script>
+
+</body>
+</html>
